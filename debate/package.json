@@ -1,0 +1,11 @@
+{
+  "name": "mole-intel-debate-engine",
+  "private": true,
+  "type": "module",
+  "description": "Debate engine: bull/bear/valuation/macro agents + judge, vLLM backend, overnight S&P 500 batch.",
+  "scripts": {
+    "debate": "node debate/engine.mjs",
+    "batch": "node debate/engine.mjs --batch",
+    "test": "node --test debate/engine.test.mjs"
+  }
+}
