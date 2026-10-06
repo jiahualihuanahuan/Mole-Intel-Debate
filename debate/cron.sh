@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Overnight debate runner. Schedule with cron, e.g.:
-#   0 23 * * * /path/to/Mole-Intel-Debate/debate/cron.sh
+# Overnight debate runner. Run now with:
+#   ./debate/cron.sh --limit 20
+# Schedule with cron only if you want it unattended, e.g.:
+#   0 23 * * * /path/to/Mole-Intel-Debate/debate/cron.sh --limit 500
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -19,7 +21,7 @@ if ! curl -sf "http://localhost:8000/v1/models" > /dev/null; then
 fi
 
 export LLM_BASE_URL="${LLM_BASE_URL:-http://localhost:8000/v1}"
-export LLM_MODEL="${LLM_MODEL:-qwen3.5-9b}"
+export LLM_MODEL="${LLM_MODEL:-qwen2.5-7b}"
 export MOLE_DATA="${MOLE_DATA:-$ROOT/data}"
 export SEARXNG_URL="${SEARXNG_URL:-http://192.168.86.35:8099}"
 # Optional: export FINNHUB_API_KEY=... before running for analyst ratings/targets.
