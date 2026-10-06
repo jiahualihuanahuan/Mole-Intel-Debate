@@ -2,7 +2,6 @@ services:
   vllm:
     image: vllm/vllm-openai:latest
     container_name: vllm-qwen
-    runtime: nvidia
     deploy:
       resources:
         reservations:
