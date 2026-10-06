@@ -12,25 +12,27 @@
  *   node debate/engine.mjs --batch --limit 20  # first 20 only
  *
  * Env:
- *   LLM_BASE_URL   default http://localhost:8000/v1
- *   LLM_MODEL      default qwen3.5-9b
- *   MOLE_DATA      default ./data  (SQLite archive of runs)
- *   FRED_API_KEY   optional; macro agent falls back to public series
+ *   LLM_BASE_URL    default http://localhost:8000/v1
+ *   LLM_MODEL       default qwen3.5-9b
+ *   MOLE_DATA       default ./data  (JSONL archive of runs)
+ *   FRED_API_KEY    optional; macro agent falls back to public series
+ *   SEARXNG_URL     default http://192.168.86.35:8099
+ *   SEARXNG_TIMEOUT default 15000 (ms)
  */
 
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const BASE_URL = (process.env.LLM_BASE_URL || "http://localhost:8000/v1").replace(/\/$/, "");
 const MODEL = process.env.LLM_MODEL || "qwen3.5-9b";
 const DATA_DIR = process.env.MOLE_DATA || path.join(__dirname, "..", "data");
 const FRED_KEY = process.env.FRED_API_KEY || "";
+const SEARXNG_URL = (process.env.SEARXNG_URL || "http://192.168.86.35:8099").replace(/\/$/, "");
+const SEARXNG_TIMEOUT = Number(process.env.SEARXNG_TIMEOUT || 15000);
 
 const AGENTS = {
   bull: {
@@ -128,7 +130,7 @@ async function yf(ticker) {
 import json, yfinance as yf
 t = yf.Ticker(${JSON.stringify(ticker)})
 info = t.info or {}
-keys = ["trailingPE","forwardPE","priceToBook","enterpriseToEbitda","profitMargins","grossMargins","returnOnEquity","freeCashflow","totalRevenue","sector","industry","marketCap","currentPrice","fiftyTwoWeekHigh","fiftyTwoWeekLow"]
+keys = ["trailingPE","forwardPE","priceToBook","enterpriseToEbitda","profitMargins","grossMargins","returnOnEquity","freeCashflow","totalRevenue","sector","industry","marketCap","currentPrice","fiftyTwoWeekHigh","fiftyTwoWeekLow","earningsTimestamp","earningsDate"]
 out = {k: info.get(k) for k in keys}
 try:
     cf = t.cashflow
@@ -136,6 +138,24 @@ try:
         row = cf.iloc[:,0]
         out["operatingCashFlow"] = float(row.get("Operating Cash Flow", float("nan")))
         out["capex"] = float(row.get("Capital Expenditure", float("nan")))
+except Exception:
+    pass
+try:
+    hist = t.history(period="3mo")
+    if hist is not None and not hist.empty:
+        last = hist.iloc[-1]
+        prev = hist.iloc[-2] if len(hist) > 1 else last
+        out["price_last"] = float(last["Close"])
+        out["price_prev_close"] = float(prev["Close"])
+        out["price_change_pct_1d"] = float((last["Close"]/prev["Close"]-1)*100)
+        # 1-month and 3-month returns
+        if len(hist) >= 22:
+            out["return_1m_pct"] = float((last["Close"]/hist.iloc[-22]["Close"]-1)*100)
+        if len(hist) >= 63:
+            out["return_3m_pct"] = float((last["Close"]/hist.iloc[-63]["Close"]-1)*100)
+        # 52-week range from history
+        out["hist_52w_high"] = float(hist["High"].max())
+        out["hist_52w_low"] = float(hist["Low"].min())
 except Exception:
     pass
 print(json.dumps(out))
@@ -170,13 +190,55 @@ async function fred(seriesId) {
   }
 }
 
+// ---------- SearXNG news search ----------
+
+const NEWS_CACHE = new Map(); // ticker -> { at, headlines }
+const NEWS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+async function searxngNews(ticker) {
+  const cached = NEWS_CACHE.get(ticker);
+  if (cached && Date.now() - cached.at < NEWS_CACHE_TTL_MS) return cached.headlines;
+
+  const queries = [
+    `${ticker} stock news`,
+    `${ticker} earnings`,
+  ];
+  const headlines = [];
+  const seen = new Set();
+  for (const q of queries) {
+    try {
+      const url = `${SEARXNG_URL}/search?q=${encodeURIComponent(q)}&format=json&categories=news`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(SEARXNG_TIMEOUT) });
+      if (!res.ok) continue;
+      const j = await res.json();
+      for (const r of j?.results || []) {
+        const title = String(r.title || "").trim();
+        if (!title || seen.has(title)) continue;
+        seen.add(title);
+        headlines.push({
+          title: title.slice(0, 300),
+          source: String(r.engine || r.url || "").slice(0, 120),
+          published: r.publishedDate || null,
+        });
+        if (headlines.length >= 10) break;
+      }
+    } catch {
+      // SearXNG down or slow — skip, don't fail the whole debate.
+    }
+    if (headlines.length >= 10) break;
+  }
+  NEWS_CACHE.set(ticker, { at: Date.now(), headlines });
+  return headlines;
+}
+
 async function buildPacket(ticker) {
-  const [yfRaw, fed, cpi, unemp, teny] = await Promise.all([
+  const [yfRaw, fed, cpi, unemp, teny, news] = await Promise.all([
     yf(ticker).catch((e) => JSON.stringify({ error: e.message })),
     fred("FEDFUNDS"),
     fred("CPIAUCSL"),
     fred("UNRATE"),
     fred("GS10"),
+    searxngNews(ticker).catch(() => []),
   ]);
   let financials = {};
   try {
@@ -198,6 +260,7 @@ async function buildPacket(ticker) {
       unemployment: unemp,
       ten_year_yield: teny,
     },
+    news,
   };
 }
 
@@ -218,6 +281,7 @@ async function debateOne(ticker) {
       ticker: packet.ticker,
       financials: packet.financials,
       macro: packet.macro,
+      news_count: (packet.news || []).length,
     },
     agents: { bull, bear, valuation, macro },
   });
@@ -229,7 +293,7 @@ async function debateOne(ticker) {
   };
 }
 
-// ---------- Archive (SQLite via better-sqlite3 if present, else JSONL) ----------
+// ---------- Archive ----------
 
 function archive(result) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -276,7 +340,7 @@ async function main() {
   if (args.batch) {
     let universe = await loadUniverse();
     if (args.limit > 0) universe = universe.slice(0, args.limit);
-    console.error(`Debate batch: ${universe.length} tickers via ${BASE_URL} model ${MODEL}`);
+    console.error(`Debate batch: ${universe.length} tickers via ${BASE_URL} model ${MODEL}; SearXNG ${SEARXNG_URL}`);
     let ok = 0;
     let fail = 0;
     for (const t of universe) {
