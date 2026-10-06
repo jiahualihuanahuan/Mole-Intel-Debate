@@ -16,7 +16,6 @@ describe("debate engine CLI", () => {
 
   it("rejects an unknown flag gracefully", () => {
     const r = spawnSync(process.execPath, [engine, "--nope"], { encoding: "utf8" });
-    // --nope is treated as a ticker; the engine will try to fetch data and fail.
     assert.notEqual(r.status, 0);
   });
 });
