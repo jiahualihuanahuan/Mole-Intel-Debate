@@ -4,9 +4,10 @@ Fork of Mole-Intel with a multi-agent bull/bear/valuation/macro/earnings/analyst
 
 ## What's in here
 
-- `debate/engine.mjs` — the debate engine. Six agents (bull, bear, valuation, macro, earnings-call, analyst-ratings) each write one JSON note from a shared packet of real data, then a judge synthesizes and explicitly lists every unresolved disagreement instead of forcing agreement.
+- `debate/engine.mjs` — six agents (bull, bear, valuation, macro, earnings-call, analyst-ratings) each write one JSON note from a shared packet of real data, then a judge synthesizes and explicitly lists every unresolved disagreement.
 - `debate/cron.sh` — overnight batch runner for cron.
 - `docker-compose.vllm.yml` — vLLM serving Qwen3.5-9B AWQ on a 10GB RTX 3080.
+- `universe.json` — ticker universe: S&P 500 + Nasdaq 100 + Russell 2000 (~2000 names).
 
 ## Quick start
 
@@ -17,7 +18,7 @@ docker compose -f docker-compose.vllm.yml up -d
 # 2. Run one ticker
 node debate/engine.mjs NVDA
 
-# 3. Overnight batch (all S&P 500 names)
+# 3. Overnight batch
 ./debate/cron.sh
 # or: 0 23 * * * /path/to/Mole-Intel-Debate/debate/cron.sh
 ```
@@ -33,23 +34,34 @@ node debate/engine.mjs NVDA
 | `SEARXNG_URL` | `http://192.168.86.35:8099` | Your SearXNG instance |
 | `SEARXNG_TIMEOUT` | `15000` | Per-query timeout in ms |
 | `FINNHUB_API_KEY` | (empty) | Optional; analyst ratings, price targets, insider transactions |
-| `EARNINGS_CALLS` | `3` | How many past earnings-call transcripts to pull (most recent prioritized) |
+| `EARNINGS_CALLS` | `3` | How many past earnings-call transcripts to pull |
 
-## Data sources per ticker
+## Universe
 
-- **yfinance** — financials, valuation multiples, 3-month price history (1m/3m returns, 52w range)
-- **FRED** — macro backdrop (fed funds, CPI, unemployment, 10y yield)
-- **SearXNG** — recent news headlines + earnings-call transcript snippets (best-effort, 24h cache)
-- **Finnhub** (optional) — analyst rating changes by firm, consensus, average/high/low price targets, insider open-market buys/sells
+The engine loads tickers from, in order:
+
+1. `../Mole-Intel/src/data/universe.ts` (if the parent repo is checked out alongside)
+2. `./universe.json` in this repo
+3. A small built-in fallback list
+
+`universe.json` ships with the S&P 500. To add Nasdaq 100 / Russell 2000 / other indices, merge their ticker lists into it (dedupe by ticker). The parent Mole-Intel repo's universe.ts already contains S&P 500 + Nasdaq 100 + Russell 2000 + international indices if you point the engine at it.
+
+## Power limit (RTX 3080 10GB)
+
+For this workload — long overnight inference, not gaming — set the power limit to **220–250W** (out of 320W max):
+
+- 250W: max throughput, ~150 tok/s, but the card and PSU run hot all night. Fine if your case has good airflow.
+- 220W: ~10–15% slower, noticeably cooler and quieter, still finishes 500 names in the window. This is the sweet spot for an unattended overnight run.
+- Below 200W: throughput drops fast; not worth it.
+
+Set it with `nvidia-smi -pl 220` (persists until reboot on some drivers; re-apply in cron.sh if needed). Watch `nvidia-smi` during the first run — if GPU temp stays under 80°C you're fine.
 
 ## Design notes
 
-- **Data and LLM are separated.** All numbers are computed in code and injected into each agent's prompt as facts. The model only interprets and argues.
-- **Agents run in parallel** per ticker; they never see each other's output, so the judge's disagreements are real.
+- **Data and LLM are separated.** All numbers are computed in code and injected as facts.
+- **Agents run in parallel** per ticker.
 - **Fixed rounds.** One round of six agents plus one judge call per ticker.
-- **Throughput.** vLLM ~150 tok/s. 503 names at 6 agent calls + 1 judge each ≈ 5–6 hours — inside a 23:00–09:00 window. If it doesn't fit, drop `EARNINGS_CALLS` to 1 or skip the earnings agent for the batch.
-- **10GB fit.** Qwen3.5-9B AWQ ~6GB weights; 8K context stays under 10GB at 0.85 utilization.
-- **Best-effort sources.** SearXNG and Finnhub failures never abort a debate; the packet just has fewer fields.
+- **Best-effort sources.** SearXNG and Finnhub failures never abort a debate.
 
 ## Requirements
 
