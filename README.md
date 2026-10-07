@@ -2,7 +2,7 @@
 
 Merged into [Mole-Intel](https://github.com/jiahualihuanahuan/Mole-Intel).
 
-The web desk, company sheet, news, six seats, judge, Docker Compose, and the 00:00 America/Toronto batch all live there. vLLM is not in that Compose file. Run it yourself on the host at port 8000, served model name `qwen3.5-9b`.
+The web desk, company sheet, news, six seats, judge, Docker Compose, and the 00:00 America/Toronto batch all live there. vLLM is not in that Compose file. Run it yourself on the host at port 8000, served model name `qwen2.5-7b`.
 
 ```bash
 git clone https://github.com/jiahualihuanahuan/Mole-Intel.git
