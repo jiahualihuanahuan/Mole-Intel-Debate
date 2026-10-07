@@ -13,7 +13,7 @@
  *
  * Env:
  *   LLM_BASE_URL      default http://localhost:8000/v1
- *   LLM_MODEL         default qwen3.5-9b
+ *   LLM_MODEL         default qwen2.5-7b
  *   MOLE_DATA         default ./data  (JSONL archive of runs)
  *   FRED_API_KEY      optional; macro agent falls back to public series
  *   SEARXNG_URL       default http://192.168.86.35:8099
@@ -38,7 +38,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const BASE_URL = (process.env.LLM_BASE_URL || "http://localhost:8000/v1").replace(/\/$/, "");
-const MODEL = process.env.LLM_MODEL || "qwen3.5-9b";
+const MODEL = process.env.LLM_MODEL || "qwen2.5-7b";
 const DATA_DIR = process.env.MOLE_DATA || path.join(__dirname, "..", "data");
 const FRED_KEY = process.env.FRED_API_KEY || "";
 const SEARXNG_URL = (process.env.SEARXNG_URL || "http://192.168.86.35:8099").replace(/\/$/, "");
